@@ -10,7 +10,7 @@ from modules.utils import DPODataCollatorWithPadding
 
 
 def load_pile_bio_retain_forget_data():
-    full_dataset = load_dataset("lapisrocks/biology-pile-labeled", token=True)["train"]
+    full_dataset = load_dataset("lapisrocks/pile-bio")["train"]
     forget_data = full_dataset.filter(lambda x: x["label"] == True)
     retain_data = full_dataset.filter(lambda x: x["label"] == False)
 
@@ -187,7 +187,7 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
 
 def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
-    return dataloaders["forget_train"], dataloaders["retain"]
+    return dataloaders # modified by wby
 
 
 def load_cyber_dataset():
@@ -278,7 +278,7 @@ def get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
 
 def get_red_team_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
     dataloaders = get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs)
-    return dataloaders["forget_train"], dataloaders["retain"]
+    return dataloaders
 
 
 def parse_conversation(conversation_string):

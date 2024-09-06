@@ -1,4 +1,4 @@
-accelerate launch --config_file $ExACCEL_CONFIG tar.py \
+accelerate launch --config_file configs/accel_config_4_gpu.yaml tar.py \
 --trainer_type tar_trainer \
 --max_steps 750 \
 --tar_num_tasks_sampled 1 \

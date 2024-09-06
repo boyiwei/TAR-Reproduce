@@ -7,7 +7,6 @@ from typing import Callable
 import numpy as np
 import schedulefree
 import torch
-import wandb
 from accelerate import Accelerator, FullyShardedDataParallelPlugin
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from transformers import (
@@ -38,17 +37,17 @@ def lambda_fn(module: torch.nn.Module):
 
 
 def finetune_no_trainer(
-    model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct",
+    model_name: str = "/scratch/gpfs/bw1822/nlp_checkpoints/llama-3/Meta-Llama-3-8B-Instruct",
     output_dir: str = None,
     model_type: AutoModelForCausalLM = AutoModelForCausalLM,
     loop_type: Callable = tar_training_loop,
     dataloader_type: Callable = get_tar_bio_dataloaders,
-    tokenizer: str = "meta-llama/Meta-Llama-3-8B-Instruct",
+    tokenizer: str = "/scratch/gpfs/bw1822/nlp_checkpoints/llama-3/Meta-Llama-3-8B-Instruct",
     args: argparse.Namespace = None,
 ):
     # Preparing FSDP (will remove for for FSDP2)
     auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=lambda_fn)
-    model = model_type.from_pretrained(model_name)
+    model = model_type.from_pretrained(model_name, device_map='auto')
     FSDP_PLUGIN = FullyShardedDataParallelPlugin(
         auto_wrap_policy=auto_wrap_policy,
     )
@@ -57,16 +56,7 @@ def finetune_no_trainer(
         fsdp_plugin=FSDP_PLUGIN,
     )
 
-    # Wandb logging
-    if accelerator.is_main_process:
-        wandb_mode = "online" if args.wandb else "disabled"
-        wandb.login()
-        wandb.init(
-            project=args.wandb_project_name,
-            config=args,
-            name="_".join(output_dir.split("/")),
-            mode=wandb_mode,
-        )
+
     accelerator.print("Beginning Training.")
     accelerator.free_memory()
     tokenizer = AutoTokenizer.from_pretrained(tokenizer)
@@ -128,7 +118,7 @@ MODEL_MAP = {
 
 # Map for tokenizers, can add more here
 TOKENIZER_MAP = {
-    "llama3": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "llama3": "/scratch/gpfs/bw1822/nlp_checkpoints/llama-3/Meta-Llama-3-8B-Instruct",
 }
 
 
@@ -150,13 +140,13 @@ def main():
         "--base_model_name",
         "-bm",
         type=str,
-        default="meta-llama/Meta-Llama-3-8B-Instruct",
+        default="/scratch/gpfs/bw1822/nlp_checkpoints/llama-3/Meta-Llama-3-8B-Instruct",
     )
     parser.add_argument(
         "--retain_model_name",
         "-rm",
         type=str,
-        default="meta-llama/Meta-Llama-3-8B-Instruct",
+        default="/scratch/gpfs/bw1822/nlp_checkpoints/llama-3/Meta-Llama-3-8B-Instruct",
     )
     parser.add_argument("--tar_inner_loop_steps", "-is", type=int, default=1)
     parser.add_argument("--tar_num_tasks_sampled", "-mnts", type=int, default=1)
@@ -165,7 +155,7 @@ def main():
         "--tar_tamper_resistance_loss_lower_bound", "-mlb", type=float, default=-11.76
     )
     parser.add_argument("--use_weighting_schedule", "-uws", action="store_true")
-    parser.add_argument("--subject", "-st", type=str, default="bio-multi-dists")
+    parser.add_argument("--subject", "-st", type=str, default="bio")
     parser.add_argument("--tar_inner_loop_subsample", "-mils", type=int, default=1)
     parser.add_argument("--tar_adversary_batch_size", "-ilbs", type=int, default=1)
     parser.add_argument("--schedule_lambda", "-sl", type=float, default=0.5)
@@ -194,7 +184,7 @@ def main():
     parser.add_argument("--wandb", "-wb", action="store_true")
     parser.add_argument("--unbounded", "-ub", action="store_true")
     parser.add_argument("--retain_same_base", "-rsb", action="store_true")
-    parser.add_argument("--base", "-b", type=str, default="llama")
+    parser.add_argument("--base", "-b", type=str, default="llama3")
     parser.add_argument(
         "--wandb_project_name", "-wpn", type=str, default="tar_training"
     )

@@ -4,7 +4,6 @@ from typing import List, Union
 import accelerate
 import torch
 import torch.distributed as dist
-import wandb
 from accelerate import Accelerator
 from accelerate.optimizer import AcceleratedOptimizer, move_to_device
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -117,7 +116,6 @@ def random_mapping_training_loop(
             if accelerator.is_main_process:
                 pbar.update(1)
                 pbar.set_postfix({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
-                wandb.log({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
     return model
 
 
@@ -209,7 +207,6 @@ def min_posterior_training_loop(
             if accelerator.is_main_process:
                 pbar.update(1)
                 pbar.set_postfix({"loss": total_loss})
-                wandb.log({"loss": total_loss})
     return model
 
 
@@ -310,7 +307,6 @@ def max_entropy_training_loop(
             if accelerator.is_main_process:
                 pbar.update(1)
                 pbar.set_postfix({"loss": total_loss})
-                wandb.log({"loss": total_loss})
     return model
 
 
@@ -404,7 +400,6 @@ def llmu_training_loop(
             if accelerator.is_main_process:
                 pbar.update(1)
                 pbar.set_postfix({"loss": total_loss})
-                wandb.log({"loss": total_loss})
     return model
 
 
@@ -507,13 +502,7 @@ def single_dataloader_accel_finetune_loop(
                 accelerator.backward(loss)
                 accelerator.wait_for_everyone()
 
-            if accelerator.is_main_process:
-                wandb.log(
-                    {
-                        wandb_with_grad_label: with_grad_loss,
-                        wandb_with_no_grad_label: with_no_grad_loss,
-                    }
-                )
+
             optimizer.step()
             optimizer.zero_grad()
             if kwargs["scheduler_type"] == "sgdr":
@@ -629,8 +618,6 @@ def double_dataloader_accel_finetune_loop(
                 accelerator.backward(loss)
                 accelerator.wait_for_everyone()
 
-            if accelerator.is_main_process:
-                wandb.log({"finetuning_training_loss": finetuning_loss})
 
             optimizer.step()
             optimizer.zero_grad()
@@ -682,7 +669,6 @@ def adversary_next_token_obj_step(
     if accelerator.is_main_process:
         sub_pbar.update(1)
         sub_pbar.set_postfix({"inner loss": total_loss})
-        wandb.log({"inner_next_token_loss": total_loss})
     return total_loss
 
 
@@ -741,13 +727,6 @@ def tamper_resistance_obj(
         accelerator.backward(loss)
         total_loss += loss.item()
         total_diagnostic_loss += diagnostic_loss
-    if accelerator.is_main_process:
-        wandb.log(
-            {
-                f"tr_{tamper_resistance_loss_type}_loss": total_loss / scale,
-                f"tr_{diagnostic_name}_loss": total_diagnostic_loss,
-            }
-        )
     return total_loss
 
 
@@ -1129,13 +1108,6 @@ def tar_training_loop(
             pbar.set_postfix(
                 {
                     "retain loss / tamper_resistance_loss": f"{total_retain_loss} / {tamper_resistance_loss}"
-                }
-            )
-            wandb.log(
-                {
-                    "retain_loss": total_retain_loss,
-                    "tamper_resistance_loss": tamper_resistance_loss,
-                    "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
 

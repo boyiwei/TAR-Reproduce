@@ -3,8 +3,11 @@ import torch
 import argparse
 import random
 import numpy as np
-from ..configs.config import SAVE_MODELS_DIR
-import wandb
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from configs.config import SAVE_MODELS_DIR
+
 
 from accelerate import Accelerator, FullyShardedDataParallelPlugin
 from transformers import (
@@ -13,12 +16,14 @@ from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
 )
+from transformers import HfArgumentParser, TrainingArguments
+from dataclasses import dataclass, field
 
-from ..modules.dataloaders import (
+from modules.dataloaders import (
     get_red_team_tar_bio_dataloaders,
     get_red_team_tar_cyber_dataloaders,
 )
-from ..modules.training import (
+from modules.training import (
     single_dataloader_accel_finetune_loop,
     double_dataloader_accel_finetune_loop,
 )
@@ -38,20 +43,19 @@ from optimizers import (
     get_adadelta,
     get_adamW_schedule_free,
 )
-import mmlu_eval.eval as eval
-from ..modules.utils import return_step_based_batch_selection
+
+from modules.utils import return_step_based_batch_selection
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 
 import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, TaskType, get_peft_model, PeftModel
 
 from torch import distributed as dist
-from ..modules.utils import fix_seed
+from modules.utils import fix_seed
 
-# Disable Weights & Biases logging if needed
-os.environ["WANDB_DISABLED"] = "false"
+
 
 # Define allowed modules for FSDP wrapping
 ALLOWED_MODULES = [
@@ -105,15 +109,6 @@ def sft_red_teaming_evaluation(
         fsdp_plugin=FSDP_PLUGIN,
     )
 
-    # Initialize Weights & Biases logging for the main process
-    if accelerator.is_main_process:
-        wandb.login()
-        run = wandb.init(
-            project="relearning_evaluation",
-            config=args,
-            name="_".join(output_dir.split("/")),
-            mode="online",
-        )
 
     accelerator.print("Starting relearning evaluation on model: ", model_name)
 
@@ -170,15 +165,17 @@ def sft_red_teaming_evaluation(
     ):
         forget_train = all_dataloaders[TRAINING_CONFIG[args.training_strategy]["multi_dist_key_name"]]
         dataloaders = [
-            all_dataloaders["pile-retain"],
+            all_dataloaders["retain"],
             forget_train,
-            all_dataloaders["meta"],
+            all_dataloaders["meta"], # no need
         ]
     else:
         dataloaders = [retain, forget_train, forget_test]
 
     # Prepare model, optimizer, and scheduler
     accelerator.free_memory()
+    for param in model.parameters():
+        param.requires_grad = True  # or False, depending on your need
     model = accelerator.prepare_model(model)
     accelerator.print(f"Model prepared.")
     accelerator.print(f"Output dir: {output_dir}")
@@ -233,33 +230,7 @@ def sft_red_teaming_evaluation(
 
     accelerator.wait_for_everyone()
 
-    # Evaluate the model if specified
-    if args.evaluate:
-        accelerator.print("Evaluation mode enabled.")
-        accelerator.print("Evaluating model.")
-        use_eos_token = (
-            True
-            if args.model_type == "meta-llama/Meta-Llama-3-8B-Instruct"
-            or args.model_type == "Qwen/Qwen2-7B-Instruct"
-            else False
-        )
-        user = os.environ.get("USER")
-        eval_args = type(
-            "Args",
-            (object,),
-            {
-                "batch_size": 2,
-                "num_fewshot_examples": 5,
-                "max_seq_len": 4096,
-                "path_to_data": "mmlu_eval/data",
-                "disable_file_writes": True,
-                "eos_pad_token": use_eos_token,
-                "save_file_dir": args.save_model_name,
-            },
-        )
-        eval.evaluate_model(model, tokenizer, accelerator, eval_args)
 
-    accelerator.print("Evaluation complete.")
 
     # Save the fine-tuned model
     accelerator.unwrap_model(model).save_pretrained(
@@ -268,6 +239,12 @@ def sft_red_teaming_evaluation(
         save_function=accelerator.save,
         state_dict=accelerator.get_state_dict(model),
     )
+    
+    if args.peft:
+        merged_model = PeftModel.from_pretrained(model, output_dir)
+        merged_model = merged_model.merge_and_unload()
+        merged_model.save_pretrained(output_dir)
+    
     accelerator.print(f"Model saved to {output_dir}.")
 
 # Configuration dictionaries for training strategies and optimizers
@@ -322,6 +299,7 @@ OPTIMIZER_CONFIG = {
     "adamW_schedule_free": get_adamW_schedule_free,
 }
 
+
 def main():
     """
     Main function to parse command-line arguments and run the SFT red teaming evaluation.
@@ -346,18 +324,28 @@ def main():
     parser.add_argument(
         "--training_strategy", "-ts", type=str, default="pure_pile_bio_forget"
     )
+    parser.add_argument("--tar_adversary_batch_size", type=int, default=4)
 
     parser.add_argument(
-        "--r->f_batch_selection_method",
+        "--batch_selection_method",
         "-bsm",
         type=callable,
         default=return_step_based_batch_selection,
     ) 
-    parser.add_argument("--r->f_prop_steps_of_retain", "-psor", type=float, default=0.4)
+    parser.add_argument("--prop_steps_of_retain", "-psor", type=float, default=0.4)
+    parser.add_argument("--prop_steps_for_batch_selection", type=float, default=0.6)
 
     parser.add_argument("--peft", "-pft", action="store_true")
-    parser.add_argument("--wandb", "-wb", action="store_true")
     parser.add_argument(
         "--evaluate_mmlu", "-mmlu", action="store_true"
     )
     parser.add_argument("--seed", "-s", type=int, default=42)
+    
+    args = parser.parse_args()
+    
+    sft_red_teaming_evaluation(model_name=args.model_name, model_type=args.model_type, output_dir=os.path.join(SAVE_MODELS_DIR, args.save_model_name),
+                               loop_type=TRAINING_CONFIG[args.training_strategy]["loop_type"], dataloader_type=TRAINING_CONFIG[args.training_strategy]["dataloader_type"],
+                               finetuning_data_type=TRAINING_CONFIG[args.training_strategy]["finetuning_data_type"], optimizer_type=OPTIMIZER_CONFIG[args.optimizer_type], args=args)
+    
+if __name__ == "__main__":
+    main()
