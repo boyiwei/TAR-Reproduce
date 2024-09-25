@@ -97,14 +97,14 @@ def get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, ar
         tokenized_forget_dataset,
         batch_size=args.tar_adversary_batch_size,
         collate_fn=data_collator,
-        shuffle=False,
+        shuffle=True,
     )
 
     camel_forget_dataloader = torch.utils.data.DataLoader(
         tokenized_camel_forget_dataset,
         batch_size=args.tar_adversary_batch_size,
         collate_fn=data_collator,
-        shuffle=False,
+        shuffle=True,
     )
 
     heldout_dataset = concatenate_datasets(
@@ -115,7 +115,7 @@ def get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, ar
         heldout_dataset,
         batch_size=args.batch_size,
         collate_fn=data_collator,
-        shuffle=False,
+        shuffle=True,
     )
 
     if accelerator is not None:
@@ -184,9 +184,89 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     }
     return dataloaders
 
-
+# def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
+#     dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
 def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
-    dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
+    # dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
+    # (
+    #     pure_retain_dataloader,
+    #     mixed_magpie_retain_dataloader,
+    #     pile_bio_dataloader,
+    #     camel_bio_dataloader,
+    #     bio_heldout_dataloader,
+    # ) = get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, args)
+    
+    (
+        tokenized_retain_dataset,
+        tokenized_forget_dataset,
+        tokenized_forget_heldout_dataset,
+        data_collator,
+    ) = get_pile_bio_retain_forget_heldout_datasets(tokenizer, cutoff_len=256)
+    (
+        tokenized_camel_forget_dataset,
+        tokenized_camel_forget_heldout_dataset,
+        _,
+    ) = get_camel_ai_datasets(tokenizer)
+    
+    magpie_train, _ = get_magpie_datasets(tokenizer, cutoff_len=256)
+
+    pure_retain_dataloader = torch.utils.data.DataLoader(
+        tokenized_retain_dataset.remove_columns(["concept_label"]),
+        batch_size=args.batch_size,
+        collate_fn=data_collator,
+        shuffle=True,
+    )
+    mixed_magpie_retain_dataloader = torch.utils.data.DataLoader(
+        concatenate_datasets(
+            [
+                tokenized_retain_dataset.remove_columns(["concept_label"]),
+                magpie_train.select(range(len(tokenized_retain_dataset) // 2)),
+            ]
+        ),  # 2/3 raw text 1/3 instruction split between retain and magpie
+        batch_size=args.batch_size,
+        collate_fn=data_collator,
+        shuffle=True,
+    )
+
+    pile_forget_dataloader = torch.utils.data.DataLoader(
+        tokenized_forget_dataset,
+        batch_size=args.tar_adversary_batch_size,
+        collate_fn=data_collator,
+        shuffle=True,
+    )
+
+    camel_forget_dataloader = torch.utils.data.DataLoader(
+        tokenized_camel_forget_dataset,
+        batch_size=args.tar_adversary_batch_size,
+        collate_fn=data_collator,
+        shuffle=False,
+    )
+
+    heldout_dataset = concatenate_datasets(
+        [tokenized_forget_heldout_dataset, tokenized_camel_forget_heldout_dataset]
+    )
+
+    heldout_dataloader = torch.utils.data.DataLoader(
+        heldout_dataset,
+        batch_size=args.batch_size,
+        collate_fn=data_collator,
+        shuffle=False,
+    )
+
+    if accelerator is not None:
+        pure_retain_dataloader = accelerator.prepare(pure_retain_dataloader)
+        pile_forget_dataloader = accelerator.prepare(pile_forget_dataloader)
+        camel_forget_dataloader = accelerator.prepare(camel_forget_dataloader)
+        heldout_dataloader = accelerator.prepare(heldout_dataloader)
+
+    dataloaders = {
+        "retain": mixed_magpie_retain_dataloader,
+        "pile-bio": pile_forget_dataloader,
+        "camel-bio": camel_forget_dataloader,
+        "forget_train": pile_forget_dataloader,
+        "adv_retain": pure_retain_dataloader,
+        "meta": heldout_dataloader,
+    }
     return dataloaders # modified by wby
 
 
@@ -554,7 +634,7 @@ def get_anthropic_hh_dpo_dataset(tokenizer, dataset_size=1000):
 
 def get_magpie_datasets(tokenizer, cutoff_len: int = 512):
     dataset = load_dataset("Magpie-Align/Magpie-Pro-MT-300K-v0.1")["train"]
-
+    split = dataset.train_test_split(test_size=0.20, seed=42)
     def tokenize(sample, cutoff_len=cutoff_len):
         MAPPING = {"human": "user", "gpt": "assistant"}
         chat = []
@@ -583,9 +663,15 @@ def get_magpie_datasets(tokenizer, cutoff_len: int = 512):
         for col in dataset.column_names
         if col not in ["input_ids", "labels", "attention_mask"]
     ]
-    dataset = dataset.map(tokenize).remove_columns(rm_cols)
-    split = dataset.train_test_split(test_size=0.20, seed=42)
-    return split["train"], split["test"]
+    print("generating tokenized train dataset for magpie")
+    split["train"] = split['train'].map(tokenize).remove_columns(rm_cols)
+    # print("generating tokenized test dataset for magpie")
+    # split["test"] = split['test'].map(tokenize).remove_columns(rm_cols)
+    # with accelerator.main_process_first():
+    #     # Set num_proc=1 to avoid multiprocessing conflicts
+    #     dataset = dataset.map(tokenize, remove_columns=rm_cols, num_proc=1)
+   
+    return split["train"], split['test']
 
 
 def get_magpie_dataloaders(tokenizer, args, cutoff_len=512):

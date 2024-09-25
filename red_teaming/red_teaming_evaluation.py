@@ -144,7 +144,7 @@ def sft_red_teaming_evaluation(
         )
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
-
+        
     # Prepare dataloaders
     with accelerator.main_process_first():
         if (
@@ -240,10 +240,11 @@ def sft_red_teaming_evaluation(
         state_dict=accelerator.get_state_dict(model),
     )
     
-    if args.peft:
-        merged_model = PeftModel.from_pretrained(model, output_dir)
-        merged_model = merged_model.merge_and_unload()
-        merged_model.save_pretrained(output_dir)
+    # if args.peft:
+    #     merged_model = PeftModel.from_pretrained(model, output_dir)
+    #     merged_model = merged_model.merge_and_unload()
+    #     output_dir_new = output_dir + "_full"
+    #     merged_model.save_pretrained(output_dir_new)
     
     accelerator.print(f"Model saved to {output_dir}.")
 
@@ -299,6 +300,15 @@ OPTIMIZER_CONFIG = {
     "adamW_schedule_free": get_adamW_schedule_free,
 }
 
+def set_all_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU
+    from transformers import set_seed
+    set_seed(seed)
 
 def main():
     """
@@ -342,6 +352,9 @@ def main():
     parser.add_argument("--seed", "-s", type=int, default=42)
     
     args = parser.parse_args()
+    print(args)
+    set_all_seeds(args.seed)
+    print("Seed set to: ", args.seed)
     
     sft_red_teaming_evaluation(model_name=args.model_name, model_type=args.model_type, output_dir=os.path.join(SAVE_MODELS_DIR, args.save_model_name),
                                loop_type=TRAINING_CONFIG[args.training_strategy]["loop_type"], dataloader_type=TRAINING_CONFIG[args.training_strategy]["dataloader_type"],

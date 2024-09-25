@@ -206,7 +206,7 @@ def min_posterior_training_loop(
             model.zero_grad(set_to_none=True)
             if accelerator.is_main_process:
                 pbar.update(1)
-                pbar.set_postfix({"loss": total_loss})
+                pbar.set_postfix({"loss": total_loss, 'lr': optimizer.param_groups[0]['lr']})
     return model
 
 
@@ -511,7 +511,7 @@ def single_dataloader_accel_finetune_loop(
                 scheduler.step()
             model.zero_grad(set_to_none=True)
             pbar.update(1)
-            pbar.set_postfix({"loss": with_grad_loss})
+            pbar.set_postfix({"loss": with_grad_loss, 'lr': optimizer.param_groups[0]['lr']})
     return model
 
 

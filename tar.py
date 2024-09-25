@@ -47,7 +47,7 @@ def finetune_no_trainer(
 ):
     # Preparing FSDP (will remove for for FSDP2)
     auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=lambda_fn)
-    model = model_type.from_pretrained(model_name, device_map='auto')
+    model = model_type.from_pretrained(model_name)
     FSDP_PLUGIN = FullyShardedDataParallelPlugin(
         auto_wrap_policy=auto_wrap_policy,
     )
