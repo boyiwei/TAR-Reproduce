@@ -489,6 +489,9 @@ def single_dataloader_accel_finetune_loop(
                     for key, value in batch.items()
                     if key in ["input_ids", "labels", "attention_mask"]
                 }
+                if i == 0:
+                    print(f"first batch inputs: {tokenizer.decode(batch_squeezed['input_ids'][0])}")
+                    print(f"batch_size = {batch_squeezed['input_ids'].shape[0]}")
                 outputs = model(
                     **_filter_inputs(batch_squeezed), output_hidden_states=False
                 )

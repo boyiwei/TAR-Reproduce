@@ -6,6 +6,7 @@ from datasets import concatenate_datasets, load_dataset
 from transformers import DataCollatorForLanguageModeling
 
 from modules.objectives import DPOLoss
+from torch.utils.data import RandomSampler
 from modules.utils import DPODataCollatorWithPadding
 
 
@@ -209,7 +210,24 @@ def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     ) = get_camel_ai_datasets(tokenizer)
     
     magpie_train, _ = get_magpie_datasets(tokenizer, cutoff_len=256)
-
+    mixed_magpie_retain_dataset = concatenate_datasets(
+            [
+                tokenized_retain_dataset.remove_columns(["concept_label"]),
+                magpie_train.select(range(len(tokenized_retain_dataset) // 2)),
+            ]
+        )  # 2/3 raw text 1/3 instruction split between retain and magpie
+    
+    heldout_dataset = concatenate_datasets(
+        [tokenized_forget_heldout_dataset, tokenized_camel_forget_heldout_dataset]
+    )
+    # shuffle dataset
+    tokenized_retain_dataset = tokenized_retain_dataset.shuffle(seed=args.seed)
+    mixed_magpie_retain_dataset = mixed_magpie_retain_dataset.shuffle(seed=args.seed)
+    tokenized_forget_dataset = tokenized_forget_dataset.shuffle(seed=args.seed)
+    tokenized_camel_forget_dataset = tokenized_camel_forget_dataset.shuffle(seed=args.seed)
+    heldout_dataset = heldout_dataset.shuffle(seed=args.seed)
+    print("success shuffle with seed: ", args.seed) 
+    
     pure_retain_dataloader = torch.utils.data.DataLoader(
         tokenized_retain_dataset.remove_columns(["concept_label"]),
         batch_size=args.batch_size,
@@ -217,12 +235,7 @@ def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
         shuffle=True,
     )
     mixed_magpie_retain_dataloader = torch.utils.data.DataLoader(
-        concatenate_datasets(
-            [
-                tokenized_retain_dataset.remove_columns(["concept_label"]),
-                magpie_train.select(range(len(tokenized_retain_dataset) // 2)),
-            ]
-        ),  # 2/3 raw text 1/3 instruction split between retain and magpie
+        mixed_magpie_retain_dataset,
         batch_size=args.batch_size,
         collate_fn=data_collator,
         shuffle=True,
@@ -230,20 +243,16 @@ def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
 
     pile_forget_dataloader = torch.utils.data.DataLoader(
         tokenized_forget_dataset,
-        batch_size=args.tar_adversary_batch_size,
+        batch_size=args.batch_size,
         collate_fn=data_collator,
         shuffle=True,
     )
 
     camel_forget_dataloader = torch.utils.data.DataLoader(
         tokenized_camel_forget_dataset,
-        batch_size=args.tar_adversary_batch_size,
+        batch_size=args.batch_size,
         collate_fn=data_collator,
         shuffle=False,
-    )
-
-    heldout_dataset = concatenate_datasets(
-        [tokenized_forget_heldout_dataset, tokenized_camel_forget_heldout_dataset]
     )
 
     heldout_dataloader = torch.utils.data.DataLoader(
@@ -254,6 +263,9 @@ def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     )
 
     if accelerator is not None:
+        mixed_magpie_retain_dataloader = accelerator.prepare(
+            mixed_magpie_retain_dataloader
+        )
         pure_retain_dataloader = accelerator.prepare(pure_retain_dataloader)
         pile_forget_dataloader = accelerator.prepare(pile_forget_dataloader)
         camel_forget_dataloader = accelerator.prepare(camel_forget_dataloader)
