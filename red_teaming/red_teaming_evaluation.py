@@ -103,12 +103,17 @@ def sft_red_teaming_evaluation(
     Returns:
         None. Saves the fine-tuned model to the specified output directory.
     """
+    
+    if args.peft:
+        FSDP_PLUGIN.use_orig_params = True
+        print("FSDP.use_orig_params: ", FSDP_PLUGIN.use_orig_params)
+    
     # Initialize Accelerator for distributed training
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         fsdp_plugin=FSDP_PLUGIN,
     )
-
+    
 
     accelerator.print("Starting relearning evaluation on model: ", model_name)
 
@@ -174,8 +179,9 @@ def sft_red_teaming_evaluation(
 
     # Prepare model, optimizer, and scheduler
     accelerator.free_memory()
-    for param in model.parameters():
-        param.requires_grad = True  # or False, depending on your need
+    if not args.peft:
+        for param in model.parameters():
+            param.requires_grad = True  # or False, depending on your need
     model = accelerator.prepare_model(model)
     accelerator.print(f"Model prepared.")
     accelerator.print(f"Output dir: {output_dir}")
