@@ -504,8 +504,13 @@ def single_dataloader_accel_finetune_loop(
                 with_grad_loss += loss.item()
                 accelerator.backward(loss)
                 accelerator.wait_for_everyone()
-
-
+                
+            # compute the gradient norm
+            parameters = [p for p in model.parameters() if p.grad is not None]
+            grad_norm = torch.norm(
+                torch.stack([p.grad.detach().norm(2) for p in parameters]), 2
+            ).item()
+            
             optimizer.step()
             optimizer.zero_grad()
             if kwargs["scheduler_type"] == "sgdr":
@@ -514,7 +519,7 @@ def single_dataloader_accel_finetune_loop(
                 scheduler.step()
             model.zero_grad(set_to_none=True)
             pbar.update(1)
-            pbar.set_postfix({"loss": with_grad_loss, 'lr': optimizer.param_groups[0]['lr']})
+            pbar.set_postfix({"loss": with_grad_loss, 'lr': optimizer.param_groups[0]['lr'], 'grad_norm': grad_norm})
     return model
 
 
