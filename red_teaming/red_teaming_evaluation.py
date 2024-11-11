@@ -170,7 +170,7 @@ def sft_red_teaming_evaluation(
     ):
         forget_train = all_dataloaders[TRAINING_CONFIG[args.training_strategy]["multi_dist_key_name"]]
         dataloaders = [
-            all_dataloaders["retain"],
+            all_dataloaders["adv_retain"],
             forget_train,
             all_dataloaders["meta"], # no need
         ]
